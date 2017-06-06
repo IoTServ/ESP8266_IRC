@@ -41,7 +41,7 @@ struct params {
 	uint8 smartconfig_type;
 
 #if 0
-	/** 云端参数配置*/
+	/** 云�??参数配置*/
 	uint8 device_name[DEVICE_NAME_LEN_MAX];
 	uint8 product_ident[PRODUCT_IDENTIFIER_LEN_MAX];
 	uint8 product_ver[PRODUCT_VERSION_LEN_MAX];

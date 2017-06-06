@@ -89,7 +89,7 @@ int32 network_connect(network_callback_t cb)
 	/** 注册网络事件通知回调*/
 	wifi_set_event_handler_cb(network_event_handle);
 
-	/** 启动连接*/
+	/** �?动连�?*/
 	if (true == wifi_station_connect())
 		return ONENET_SUCCESS;
 	else
@@ -105,10 +105,11 @@ void network_disconnect(void)
 
 int32 network_start_smartconfig(uint8 type)
 {
+	os_printf("s_manufacture_mode12\r\n");
 	params_set_smartconfig_type(type);
-
+	os_printf("s_manufacture_mode13\r\n");
 	smartconfig_stop();
-
+	os_printf("s_manufacture_mode14\r\n");
 	if (SMARTCONFIG_TYPE_SOFTAP == type) {
 		wifi_set_opmode(SOFTAP_MODE);
 	} else {

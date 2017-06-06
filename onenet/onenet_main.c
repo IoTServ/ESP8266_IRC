@@ -28,6 +28,7 @@
 #include "led.h"
 #include "hxd019.h"
 #include "hxd_app.h"
+#include "key.h"
 /*****************************************************************************/
 /* Local Definitions ( Constant and Macro )                                  */
 /*****************************************************************************/
@@ -52,6 +53,15 @@ struct module_time
 #define STM_ENTRY_SIG 0x0001
 #define DRIVER_LED_EVT 0x0002
 #define SYS_TICK_EVT 0x0004
+/**
+ *******************************************************************************
+ * @brief      gpio config
+ *******************************************************************************
+ */
+#define Reset_Pin_NUM         4
+#define Reset_Pin_FUNC        FUNC_GPIO4
+#define Reset_Pin_MUX         PERIPHS_IO_MUX_GPIO4_U
+
 
 /*****************************************************************************/
 /* Local Function Prototype                                                  */
@@ -67,6 +77,7 @@ static uint8 onenet_main_running = 0;
 
 LOCAL os_timer_t dispatch_timer;
 LOCAL os_timer_t led_timer;
+LOCAL os_timer_t key_timer;
 
 xQueueHandle xQueueDevice;
 LOCAL uint16_t device_event;
@@ -85,6 +96,15 @@ static uint32_t s_blink_cnt=0;
 static uint8_t s_blink_cnt_toggle;
 static uint8_t s_blink_cnt_repeat;
 
+    /**
+ *******************************************************************************
+ * @brief     ������ر���?
+ *******************************************************************************
+ */
+static struct keys_param switch_param;
+static struct single_key_param *switch_signle;
+static bool status = true;
+
 /*****************************************************************************/
 /* Global Variables                                                          */
 /*****************************************************************************/
@@ -96,21 +116,23 @@ extern uint32_t g_sys_tick;
 /*****************************************************************************/
 /* Function Implementation                                                   */
 /*****************************************************************************/
+static void Switch_LongPress_Handler( void );
+static void drv_Switch_Init( void );
 /*
  * 接收数据
  */
 void onenet_cloud_receive(const unsigned char *pdata, unsigned short length)
 {
 	// app->mcu:
-	//   获取设备属性值, [0]:0x02-读
-	//   设置设备属性值  [0]:0x01-写  [1]:属性标记位  [2-x]:属性值
+	//   获取设�?�属性�?, [0]:0x02-�??
+	//   设置设�?�属性�?  [0]:0x01-�??  [1]:属性标记位  [2-x]:属性�?
 	//
 	// note:length的大小是packed之后的属性值结构体字节大小
 	if (length == 1 && pdata[0] == 0x02)
 	{
 		mcu_status_t *mcu_status;
 
-		// !!! 报告数据给app, [0]:0x03  [1-x]:属性值
+		// !!! 报告数据给app, [0]:0x03  [1-x]:属性�?
 		uint8 mcu_data[IRCODE_LEN + 1];
 		mcu_data[0] = 0x03;
 		mcu_status = (mcu_status_t *)(&mcu_data[1]);
@@ -141,10 +163,10 @@ void onenet_cloud_receive(const unsigned char *pdata, unsigned short length)
 		}
 
 		// s_mcu_status -->  mcu driver
-		onenet_app_apply_settings(); //根据数据点状态来控制硬件
+		onenet_app_apply_settings(); //根据数据点状态来控制�??�??
 
 		// s_mcu_status  -->  flash
-		onenet_app_save(); // 保存当前的数据点状态信息
+		onenet_app_save(); // 保存当前的数�??点状态信�??
 	}
 }
 
@@ -196,7 +218,7 @@ void onenet_app_load(void)
 
 void onenet_app_save(void)
 {
-	s_system_status.mcu_status = s_mcu_status; //结构体拷贝
+	s_system_status.mcu_status = s_mcu_status; //结构体拷�??
 
 	spi_flash_erase_sector(ONENET_APP_START);
 
@@ -241,10 +263,10 @@ static void scan_done(void *arg, STATUS status)
 			os_printf("(%d,\"%s\",%d,\"" MACSTR "\",%d)\r\n",
 					  bss_link->authmode, ssid, bss_link->rssi,
 					  MAC2STR(bss_link->bssid), bss_link->channel);
-			// 如果产测路由器在附近则进入产测模式
+			// 如果产测�??由器在附近则进入产测模式
 			if (strcmp("aibox-manufacture-test", ssid) == 0)
 			{
-				// 开始产测, 24hour
+				// 开始产�??, 24hour
 				s_manufacture_timeout = 1;
 				os_timer_disarm(&s_manufacture_timer);
 				os_timer_setfn(&s_manufacture_timer, manufacture_check, 0);
@@ -290,23 +312,28 @@ void onenet_app_tick(uint32_t tick)
 		onenet_app_save();
 	}
 
-	// 10s内连续上电计数: 3次进入产测模式
+	// 5次进入配网模�?
 	if (s_system_status.start_continue >= 5)
 	{
 		s_system_status.start_continue = 0;
-
+		os_printf("network_start_smartconfig\r\n");
 		onenet_app_save();
+		network_start_smartconfig(SMARTCONFIG_TYPE_ESPTOUCH);
 	}
-	// else if (s_system_status.start_continue == 5)
-	// {
-	// 	s_upgrade_request = 1;
-	// }
+	 else if (s_system_status.start_continue == 4)
+	 {
+	 	s_system_status.start_continue = 0;
+		onenet_app_save();
+	 }
 	else if (s_system_status.start_continue == 3)
 	{
 		s_manufacture_mode = 1;
+		os_printf("s_manufacture_mode\r\n");
+		network_start_smartconfig(SMARTCONFIG_TYPE_ESPTOUCH);
+		os_printf("s_manufacture_mode11\r\n");
 	}
 
-	//产测模式: 1s发射一次红外
+	//产测模式: 1s发射一次红�??
 	if (s_manufacture_mode == 1)
 	{
 		if (s_manufacture_timeout == 0)
@@ -442,13 +469,13 @@ static void onenet_device_notification_callback(void *context,
 static void onenet_device_software_update_callback(void *context,
 												   const rgmp_module_update_info_t *modules, int count)
 {
-	/** 仅�?�录固件包信�?，由其它任务来执行升�?*/
+	/** 仅�?�录固件包信�???，由其它任务来执行升�???*/
 }
 
 static int onenet_device_configuration_callback(void *context,
 												const char *configuration, size_t size)
 {
-	/** 处理下发的配�?，格式为tlv*/
+	/** 处理下发的配�???，格式为tlv*/
 }
 
 static void cloud_link_task(void *params)
@@ -472,7 +499,7 @@ static void cloud_link_task(void *params)
 			}
 		}
 
-		/** 设�?�创建成功后，或设�?�掉线时，重新打开设�?�进行网络重�?*/
+		/** 设�?�创建成功后，或设�?�掉线时，重新打开设�?�进行网络重�???*/
 		if ((ONENET_DEVICE_STATUS_CREATED == device_ctx->cloud_link_status) || (ONENET_DEVICE_STATUS_LINK_FAILED == device_ctx->cloud_link_status))
 		{
 			os_printf("Open Device \n");
@@ -484,7 +511,7 @@ static void cloud_link_task(void *params)
 				os_printf("Open Device success\n");
 				onenet_device_get_id_token(device_ctx->dev, &device_ctx->dev_id, device_ctx->acc_token);
 				device_ctx->cloud_link_status = ONENET_DEVICE_STATUS_LINKED;
-				/** �?动mdns，允许绑定�?��??*/
+				/** �???动mdns，允许绑定�?��??*/
 				if (BIND_STATUS_UNBIND == params_get_bind_status())
 					onenet_device_bind();
 			}
@@ -539,20 +566,22 @@ void onenet_main_task(void *params)
 
 	xQueueDevice = xQueueCreate(10, sizeof(uint8_t));
 
+	drv_Switch_Init();
+
 	os_timer_disarm(&dispatch_timer);
 	os_timer_setfn(&dispatch_timer, (os_timer_func_t *)driver_actor, &dispatch_event);
 	os_timer_arm(&dispatch_timer, 1, 0);
 
 	os_printf("%s : %d ==========\n", __FUNCTION__, __LINE__);
 
-	onenet_main_running = 1;
-	/** 进入主循�?*/
-	while (onenet_main_running)
+	//onenet_main_running = 1;
+	/** 进入主循�???*/
+	while (1)
 	{
 
-		if (xQueueReceive(xQueueDevice, (void *)&device_event, (portTickType)portMAX_DELAY))
+		if (xQueueReceive(xQueueDevice, (void *)&onenet_main_running, (portTickType)portMAX_DELAY))
 		{
-			/** 等待网络连接成功，启动云�?连接*/
+			/** 等待网络连接成功，启动云�???连接*/
 			if ((NETWORK_LINKED == device_ctx->module_status.net_link_flag) && (ONENET_DEVICE_STATUS_IDLE == device_ctx->cloud_link_status))
 			{
 				device_ctx->cloud_link_status = ONENET_DEVICE_STATUS_START_LINK;
@@ -565,7 +594,7 @@ void onenet_main_task(void *params)
 					device_event &= ~SYS_TICK_EVT;
 					g_sys_tick++;
 					//power on counter
-					//os_printf("Device Tick event\n");
+					os_printf("Device Tick event\n");
 					onenet_app_tick(g_sys_tick);
 				}
 
@@ -600,7 +629,7 @@ void onenet_main_task(void *params)
 
 					if (NETWORK_LINKING == device_ctx->module_status.net_link_flag)
 					{
-						//网络未连接, 红灯2s一闪
+						//网络�??连接, 红灯2s一�??
 						if (s_blink_cnt == 1)
 						{
 							led_set(RED, LED_ON);
@@ -618,7 +647,7 @@ void onenet_main_task(void *params)
 					}
 					else if (sm_state != ONENET_DEVICE_STATUS_LINK_FAILED)
 					{
-						//smart的不同状态下闪烁频率改变, 越来越快
+						//smart的不同状态下�??烁�?�率改变, 越来越快
 						if (sm_state == ONENET_DEVICE_STATUS_IDLE)
 						{
 							s_blink_cnt_toggle = 30;
@@ -640,7 +669,7 @@ void onenet_main_task(void *params)
 							s_blink_cnt_repeat = 60;
 						}
 
-						//smartlink, 红绿交替闪
+						//smartlink, 红绿交替�??
 						if (s_blink_cnt == 1)
 						{
 							led_set(RED, LED_ON);
@@ -658,7 +687,7 @@ void onenet_main_task(void *params)
 					}
 					// else if (nw_state == NW_STATE_AP)
 					// {
-					// 	//ap配网状态, 红绿一起闪烁
+					// 	//ap配网状�?, 红绿一起闪�??
 					// 	if (s_blink_cnt == 1)
 					// 	{
 					// 		led_set(RED, LED_ON);
@@ -676,11 +705,11 @@ void onenet_main_task(void *params)
 					// }
 					else
 					{
-						//网络连接了
+						//网络连接�??
 						if (device_ctx->cloud_link_status == ONENET_DEVICE_STATUS_LINKED) {
 							if (hxd_get_state() == HXD_STATE_IDLE)
 							{
-								//hxd空闲状态，蓝色闪烁，网络已连接
+								//hxd空闲状态，蓝色�??烁，网络已连�??
 								if (s_blink_cnt == 1)
 								{
 									led_set(RED, LED_OFF);
@@ -705,7 +734,7 @@ void onenet_main_task(void *params)
 						}
 						// else
 						// {
-						// 	// 固件升级, 100ms快闪
+						// 	// 固件升级, 100ms�??�??
 						// 	if (s_blink_cnt == 1)
 						// 	{
 						// 		led_set(RED, LED_ON);
@@ -723,7 +752,7 @@ void onenet_main_task(void *params)
 						// }
 					}
 
-					// 产测模式计数器
+					// 产测模式计数�??
 					if (s_manufacture_timeout)
 					{
 						led_set(RED, LED_ON);
@@ -737,6 +766,43 @@ void onenet_main_task(void *params)
 	}
 }
 
+/**
+ *******************************************************************************
+ * @brief       ���س�״̬������
+ * @param       [in/out]  void
+ * @return      void
+ * @note        None
+ *******************************************************************************
+ */
+static void Switch_LongPress_Handler( void )
+{
+	s_system_status.start_continue = 5;
+	onenet_app_save();
+	//reset system
+	system_restart();
+
+}
+
+/**
+*******************************************************************************
+ * @brief       �����ʼ������?
+ * @param       [in/out]  void
+ * @return      void
+ * @note        None
+*******************************************************************************
+ */
+static void drv_Switch_Init( void )
+{
+    switch_signle = key_init_single( Reset_Pin_NUM, Reset_Pin_MUX,
+                                     Reset_Pin_FUNC,
+                                     &Switch_LongPress_Handler,
+                                     NULL );
+    switch_param.key_num = 1;
+    switch_param.single_key = &switch_signle;
+
+    key_init( &switch_param );
+}
+
 int32 onenet_start(void)
 {
 	int32 err = ONENET_SUCCESS;
@@ -744,7 +810,7 @@ int32 onenet_start(void)
 	uart_set_print_port(UART0);
 
 	os_printf("SDK version:%s\n", system_get_sdk_version());
-	/** 初�?�化设�?�实�?*/
+	/** 初�?�化设�?�实�???*/
 	if (ONENET_SUCCESS != (err = device_init(&device_ctx)))
 		return err;
 
@@ -758,7 +824,7 @@ int32 onenet_start(void)
 	/** 设置模组信息*/
 	//set_module_info();
 
-	/* �?动主�?�?*/
+	/* �???动主�???�???*/
 	xTaskCreate(onenet_main_task, "onenet_main_task", 1024, NULL, 2,
 				NULL);
 
@@ -769,3 +835,5 @@ int32 onenet_start(void)
 params_init_fail:
 	device_exit(device_ctx);
 }
+
+

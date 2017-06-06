@@ -295,8 +295,8 @@ uint32 gpio_input_get(void);
 /**
   * @}
   */
+/*
 
-/**
   * @}
   */
 
