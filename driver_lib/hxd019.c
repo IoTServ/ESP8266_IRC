@@ -398,6 +398,50 @@ hxd019_learn(uint8_t method, hxd019_learn_callback_t func)
 	os_timer_arm(&hxd_learn_tm, 10, 1);
 }
 
+/*
+ * Send the data in hxd_learn_data[] which learned by hxd019_learn()
+ * to the HXD019.And then make HXD019 to output the the same
+ * waveform as it learned.
+ *
+ * @return  void
+ *
+ * notes    1)In actual code debugging,I find that when use 
+ *          function hxd019_learn with parameter methon=1
+ * 			or method=2,I can get the learned data correctly,
+ * 			But when I sent the data back to HX019. Only
+ * 			when I use the hxd_learn_data from method=2,
+ * 			it works fine.
+ * 			So I don't implement this function with a
+ * 			parameter method=1.
+ * 			2)Remember to invoke the function hxd019_learn(2,...)
+ * 			bofore use this one.
+ */
+void hxd019_send_learned_data(void)
+{
+	/*
+	Why the buffer size is 232?
+	It contains three parts:
+	1 head: 0x30 0x03
+	2 data: (230 - 1)bytes,we detele the first byte of this buffer.
+			because it specifies if the hxd019 has learned data 
+			successfully or not.
+	3 checksum: low 8 bits sum number of all the data in part 1 and 2.
+	*/
+	uint8_t learned_data[232] = { 0 };
+	uint8_t checksum = 0x00;
+
+	learned_data[0] = 0x30;
+	learned_data[1] = 0x03;
+
+	memcpy(learned_data + 2, hxd_learn_data + 1, sizeof(hxd_learn_data) - 1);
+
+	for(uint8_t i = 0; i < sizeof(learned_data) - 1; ++i)
+		checksum += learned_data[i];
+	
+	learned_data[sizeof(learned_data) - 1] = checksum;
+
+	hxd019_write(learned_data, sizeof(learned_data));
+}
 
 
 #ifdef HXD019_TEST
