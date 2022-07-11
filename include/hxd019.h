@@ -62,6 +62,7 @@ void hxd019_init(void);
 void hxd019_write(uint8_t *buf, int n);
 uint8_t hxd019_read(uint8_t *buf);
 void hxd019_learn(uint8_t method, hxd019_learn_callback_t func);
+void hxd019_send_learned_data(void);
 
 #ifdef HXD019_TEST
 // ²âÊÔº¯Êý
